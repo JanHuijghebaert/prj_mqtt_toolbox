@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import secrets
 import sys
 import threading
 from urllib.parse import urlsplit
@@ -11,23 +12,13 @@ CONNECTION_TIMEOUT = 10
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Subscribe to or publish an MQTT topic")
-    parser.add_argument(
-        "--broker", default="tcp://localhost:1883", help="MQTT broker URL"
-    )
-    parser.add_argument(
-        "--client-id", default="mqtt-toolbox-client", help="MQTT client ID"
-    )
+    parser.add_argument("--broker", default="tcp://localhost:1883", help="MQTT broker URL")
+    parser.add_argument("--client-id", default="", help="MQTT client ID (generated automatically when omitted)")
     parser.add_argument("--username", default="", help="MQTT username")
     parser.add_argument("--password", default="", help="MQTT password")
-    parser.add_argument(
-        "--topic", default="test/topic", help="topic to subscribe to or publish on"
-    )
-    parser.add_argument(
-        "--qos", type=int, choices=(0, 1, 2), default=1, help="message QoS"
-    )
-    parser.add_argument(
-        "--publish", default="", help="publish this message to the topic and exit"
-    )
+    parser.add_argument("--topic", default="topic/test", help="topic to subscribe to or publish on")
+    parser.add_argument("--qos", type=int, choices=(0, 1, 2), default=1, help="message QoS")
+    parser.add_argument("--publish", default="", help="publish this message to the topic and exit")
     return parser.parse_args()
 
 
@@ -51,9 +42,10 @@ def broker_connection(broker_url: str) -> tuple[str, int, bool]:
 
 def run(args: argparse.Namespace) -> None:
     host, port, use_tls = broker_connection(args.broker)
+    client_id = args.client_id or f"clId{secrets.randbelow(900_000) + 100_000}"
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=args.client_id,
+        client_id=client_id,
         clean_session=True,
     )
     client.socket_timeout = CONNECTION_TIMEOUT
@@ -111,22 +103,41 @@ def run(args: argparse.Namespace) -> None:
     client.on_subscribe = on_subscribe
 
     try:
+        transport = "TLS" if use_tls else "plain"
+        print(f"Using MQTT client ID: {client_id}", file=sys.stderr, flush=True)
+        print(
+            f"Connecting to MQTT broker {host}:{port} ({transport})...",
+            file=sys.stderr,
+            flush=True,
+        )
         client.connect(host, port, keepalive=60)
         client.loop_start()
         if not connected.wait(CONNECTION_TIMEOUT):
             raise RuntimeError("MQTT connection timed out")
         if connection_error:
             raise RuntimeError(f"MQTT connection failed: {connection_error[0]}")
+        print(f"Connected to MQTT broker {host}:{port}", file=sys.stderr, flush=True)
 
         if args.publish:
+            print(
+                f"Publishing to {args.topic} (QoS {args.qos})...",
+                file=sys.stderr,
+                flush=True,
+            )
             info = client.publish(args.topic, args.publish, qos=args.qos)
             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                 raise RuntimeError(f"MQTT publish failed: {mqtt.error_string(info.rc)}")
             info.wait_for_publish(timeout=CONNECTION_TIMEOUT)
             if not info.is_published():
                 raise RuntimeError("MQTT publish timed out")
+            print(f"Published to {args.topic}", file=sys.stderr, flush=True)
             return
 
+        print(
+            f"Subscribing to {args.topic} (QoS {args.qos})...",
+            file=sys.stderr,
+            flush=True,
+        )
         result, _mid = client.subscribe(args.topic, qos=args.qos)
         if result != mqtt.MQTT_ERR_SUCCESS:
             raise RuntimeError(f"MQTT subscription failed: {mqtt.error_string(result)}")
@@ -135,6 +146,7 @@ def run(args: argparse.Namespace) -> None:
         if subscription_error:
             raise RuntimeError(f"MQTT subscription failed: {subscription_error[0]}")
 
+        print(f"Subscription to {args.topic} confirmed", file=sys.stderr, flush=True)
         print(
             f"Subscribed to {args.topic} on {args.broker}; press Ctrl+C to exit",
             flush=True,
@@ -142,6 +154,7 @@ def run(args: argparse.Namespace) -> None:
         threading.Event().wait()
     finally:
         if client.is_connected():
+            print("Disconnecting from MQTT broker...", file=sys.stderr, flush=True)
             client.disconnect()
         client.loop_stop()
 
