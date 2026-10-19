@@ -74,7 +74,7 @@ $ mosquitto_pub -h localhost -u <your_username> -P <your_password> -t "topic/tes
 
 On MQTT Explorer:
 
-- Protocol: mqtt://
-- Host: <ip_addres_of_broker>
-- Username: <your_username>
-- Password: <your_password>
+- Protocol: ```mqtt://```
+- Host: ```<ip_addres_of_broker>```
+- Username: ```<your_username>```
+- Password: ```<your_password>```
